@@ -17,3 +17,6 @@
 *.pyc
 .DS_Store
 *.tar.gz
+.zcodeignore
+plan-*
+orig-iso

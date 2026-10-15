@@ -57,7 +57,9 @@ define NWIPE_UPDATE_VERSION_TXT
 		{ echo "ERROR: Failed to update version.txt - unexpected format in file?"; exit 1; }
 endef
 
-NWIPE_PRE_CONFIGURE_HOOKS += NWIPE_UPDATE_VERSION_TXT
+# SBT: version.txt is maintained manually (2025.11_31_x86-64_0.42-SBT); the
+# automatic rewrite of its suffix to <nwipe-git-hash>-commit-dev is disabled.
+#NWIPE_PRE_CONFIGURE_HOOKS += NWIPE_UPDATE_VERSION_TXT
 
 ################################################################################
 # Version architecture nwipe banner updater (pre-build)

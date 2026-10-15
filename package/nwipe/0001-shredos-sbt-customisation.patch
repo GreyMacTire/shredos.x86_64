@@ -1,0 +1,463 @@
+diff --git a/src/conf.c b/src/conf.c
+index 5045389..e255246 100644
+--- a/src/conf.c
++++ b/src/conf.c
+@@ -111,7 +111,7 @@ int nwipe_conf_init()
+      * to nwipes conf file they MUST appear below in this list of groups and settings.
+      */
+ 
+-    nwipe_conf_populate( "Organisation_Details.Business_Name", "Not Applicable (BN)" );
++    nwipe_conf_populate( "Organisation_Details.Business_Name", "SBT" );
+     nwipe_conf_populate( "Organisation_Details.Business_Address", "Not Applicable (BA)" );
+     nwipe_conf_populate( "Organisation_Details.Contact_Name", "Not Applicable (BCN)" );
+     nwipe_conf_populate( "Organisation_Details.Contact_Phone", "Not Applicable (BCP)" );
+@@ -122,7 +122,7 @@ int nwipe_conf_init()
+      */
+     nwipe_conf_populate( "PDF_Certificate.PDF_Enable", "ENABLED" );
+     nwipe_conf_populate( "PDF_Certificate.PDF_Preview", "DISABLED" );
+-    nwipe_conf_populate( "PDF_Certificate.PDF_Host_Visibility", "DISABLED" );
++    nwipe_conf_populate( "PDF_Certificate.PDF_Host_Visibility", "ENABLED" );
+     nwipe_conf_populate( "PDF_Certificate.PDF_tag", "DISABLED" );
+     nwipe_conf_populate( "PDF_Certificate.User_Defined_Tag", "Empty Tag" );
+ 
+diff --git a/src/create_single_disc_pdf.c b/src/create_single_disc_pdf.c
+index 4da6961..505e5f5 100644
+--- a/src/create_single_disc_pdf.c
++++ b/src/create_single_disc_pdf.c
+@@ -519,18 +519,48 @@ int create_single_disc_pdf( nwipe_thread_data_ptr_t* ptrx, nwipe_context_t* ptr
+      *
+      * Sanitize the strings that we are going to use to create the report filename
+      * by converting any non alphanumeric characters to an underscore or hyphen
++     *
++     * SBT: The report filename format is
++     * Nwipe_<DD-MM-YYYY>_<HH-MM-SS>_System-<system serial>_Drive-<drive serial>.pdf
+      */
+-    replace_non_alphanumeric( end_time_text, '-' );
++    char sbt_filename_time_text[50];
++    char sbt_system_serial_text[DMIDECODE_RESULT_LENGTH];
++
++    /* Filename timestamp as day-month-year_hour-min-sec. */
++    p = localtime( &c->end_time );
++    snprintf( sbt_filename_time_text,
++              sizeof( sbt_filename_time_text ),
++              "%02i-%02i-%04i_%02i-%02i-%02i",
++              p->tm_mday,
++              1 + p->tm_mon,
++              1900 + p->tm_year,
++              p->tm_hour,
++              p->tm_min,
++              p->tm_sec );
++
++    /* Sanitize a copy of the system serial; the shared misc struct field must
++     * stay untouched for the system report PDF that is created after this one. */
++    strncpy( sbt_system_serial_text, d->dmidecode_system_serial_number, sizeof( sbt_system_serial_text ) - 1 );
++    sbt_system_serial_text[sizeof( sbt_system_serial_text ) - 1] = '\0';
++    replace_non_alphanumeric( sbt_system_serial_text, '_' );
++    if( sbt_system_serial_text[0] == '\0' )
++    {
++        snprintf( sbt_system_serial_text, sizeof( sbt_system_serial_text ), "UNKNOWN" );
++    }
++
+     replace_non_alphanumeric( c->device_model, '_' );
+     replace_non_alphanumeric( c->device_serial_no, '_' );
++    if( c->device_serial_no[0] == '\0' )
++    {
++        snprintf( c->device_serial_no, sizeof( c->device_serial_no ), "UNKNOWN" );
++    }
+     snprintf( c->PDF_filename,
+               sizeof( c->PDF_filename ),
+-              "%s/nwipe_report_%s_Model_%s_Serial_%s_device_%s.pdf",
++              "%s/Nwipe_%s_System-%s_Drive-%s.pdf",
+               nwipe_options.PDFreportpath,
+-              end_time_text,
+-              c->device_model,
+-              c->device_serial_no,
+-              c->device_name_terse );
++              sbt_filename_time_text,
++              sbt_system_serial_text,
++              c->device_serial_no );
+ 
+     pdf_save( pdf, c->PDF_filename );
+     pdf_destroy( pdf );
+diff --git a/src/display_help.c b/src/display_help.c
+index 5794c76..0e3d6c3 100644
+--- a/src/display_help.c
++++ b/src/display_help.c
+@@ -81,7 +81,7 @@ void display_help()
+     "        I/O mode: auto (default), direct, cached\n\n" \
+     BHCYN \
+     "  -m, --method=METHOD\n" reset \
+-    "        The wiping method. See man page for more details. (default: PRNG)\n" \
++    "        The wiping method. See man page for more details. (default: DoD Short)\n" \
+     BHCYN \
+     "        dod522022m | dod" reset "       - 7 pass DOD 5220.22-M method\n" \
+     BHCYN \
+diff --git a/src/gui.c b/src/gui.c
+index 20a5d45..537eb40 100644
+--- a/src/gui.c
++++ b/src/gui.c
+@@ -2610,8 +2610,8 @@ void nwipe_gui_verify( void )
+ 
+     extern int terminate_signal;
+ 
+-    /* The number of definitions in the nwipe_verify_t enumeration. */
+-    const int count = 3;
++    /* SBT: "Verification Off" is hidden; focus 0 = NWIPE_VERIFY_LAST, 1 = NWIPE_VERIFY_ALL. */
++    const int count = 2;
+ 
+     /* The first tabstop. */
+     const int tab1 = 2;
+@@ -2619,8 +2619,9 @@ void nwipe_gui_verify( void )
+     /* The second tabstop. */
+     const int tab2 = 30;
+ 
+-    /* Set the initial focus. */
+-    int focus = nwipe_options.verify;
++    /* Set the initial focus; NWIPE_VERIFY_NONE can only come from the CLI and is not offered. */
++    int focus = ( nwipe_options.verify == NWIPE_VERIFY_NONE ) ? NWIPE_VERIFY_LAST : nwipe_options.verify;
++    focus -= 1;
+ 
+     /* The current working row. */
+     int yy;
+@@ -2644,7 +2645,6 @@ void nwipe_gui_verify( void )
+         yy = 2;
+ 
+         /* Print the options. */
+-        mvwprintw( main_window, yy++, tab1, "  Verification Off  " );
+         mvwprintw( main_window, yy++, tab1, "  Verify Last Pass  " );
+         mvwprintw( main_window, yy++, tab1, "  Verify All Passes " );
+         mvwprintw( main_window, yy++, tab1, "                    " );
+@@ -2656,18 +2656,6 @@ void nwipe_gui_verify( void )
+         {
+             case 0:
+ 
+-                mvwprintw( main_window,
+-                           yy++,
+-                           tab1,
+-                           "Do not verify passes. The wipe will be a write-only operation.              " );
+-                mvwprintw( main_window,
+-                           yy++,
+-                           tab1,
+-                           "                                                                            " );
+-                break;
+-
+-            case 1:
+-
+                 mvwprintw( main_window,
+                            yy++,
+                            tab1,
+@@ -2678,7 +2666,7 @@ void nwipe_gui_verify( void )
+                            "device with zeros.                                                          " );
+                 break;
+ 
+-            case 2:
++            case 1:
+ 
+                 mvwprintw( main_window,
+                            yy++,
+@@ -2752,7 +2740,8 @@ void nwipe_gui_verify( void )
+ 
+                 if( focus >= 0 && focus < count )
+                 {
+-                    nwipe_options.verify = focus;
++                    /* Dialog index 0/1 maps to enum NWIPE_VERIFY_LAST/NWIPE_VERIFY_ALL. */
++                    nwipe_options.verify = focus + 1;
+                 }
+                 return;
+ 
+@@ -3147,8 +3136,9 @@ void nwipe_gui_method( void )
+ 
+     extern int terminate_signal;
+ 
+-    /* The number of implemented methods. */
+-    const int count = 12;
++    /* The number of methods offered to the user. SBT: Fill With Ones and
++     * PRNG Stream are hidden (unsafe: <3 passes / rounds-dependent). */
++    const int count = 10;
+ 
+     /* The first tabstop. */
+     const int tab1 = 2;
+@@ -3156,8 +3146,8 @@ void nwipe_gui_method( void )
+     /* The second tabstop. */
+     const int tab2 = 30;
+ 
+-    /* The currently selected method. */
+-    int focus = 0;
++    /* The currently selected method; fallback is DoD Short (index 2). */
++    int focus = 2;
+ 
+     /* The current working row. */
+     int yy;
+@@ -3174,49 +3164,41 @@ void nwipe_gui_method( void )
+     {
+         focus = 0;
+     }
+-    if( nwipe_options.method == &nwipe_one )
+-    {
+-        focus = 1;
+-    }
+     if( nwipe_options.method == &nwipe_ops2 )
+     {
+-        focus = 2;
++        focus = 1;
+     }
+     if( nwipe_options.method == &nwipe_dodshort )
+     {
+-        focus = 3;
++        focus = 2;
+     }
+     if( nwipe_options.method == &nwipe_dod522022m )
+     {
+-        focus = 4;
++        focus = 3;
+     }
+     if( nwipe_options.method == &nwipe_gutmann )
+     {
+-        focus = 5;
+-    }
+-    if( nwipe_options.method == &nwipe_random )
+-    {
+-        focus = 6;
++        focus = 4;
+     }
+     if( nwipe_options.method == &nwipe_verify_zero )
+     {
+-        focus = 7;
++        focus = 5;
+     }
+     if( nwipe_options.method == &nwipe_verify_one )
+     {
+-        focus = 8;
++        focus = 6;
+     }
+     if( nwipe_options.method == &nwipe_is5enh )
+     {
+-        focus = 9;
++        focus = 7;
+     }
+     if( nwipe_options.method == &nwipe_bruce7 )
+     {
+-        focus = 10;
++        focus = 8;
+     }
+     if( nwipe_options.method == &nwipe_bmb )
+     {
+-        focus = 11;
++        focus = 9;
+     }
+ 
+     do
+@@ -3231,12 +3213,10 @@ void nwipe_gui_method( void )
+ 
+         /* Print the options. */
+         mvwprintw( main_window, yy++, tab1, "  %s", nwipe_method_label( &nwipe_zero ) );
+-        mvwprintw( main_window, yy++, tab1, "  %s", nwipe_method_label( &nwipe_one ) );
+         mvwprintw( main_window, yy++, tab1, "  %s", nwipe_method_label( &nwipe_ops2 ) );
+         mvwprintw( main_window, yy++, tab1, "  %s", nwipe_method_label( &nwipe_dodshort ) );
+         mvwprintw( main_window, yy++, tab1, "  %s", nwipe_method_label( &nwipe_dod522022m ) );
+         mvwprintw( main_window, yy++, tab1, "  %s", nwipe_method_label( &nwipe_gutmann ) );
+-        mvwprintw( main_window, yy++, tab1, "  %s", nwipe_method_label( &nwipe_random ) );
+         mvwprintw( main_window, yy++, tab1, "  %s", nwipe_method_label( &nwipe_verify_zero ) );
+         mvwprintw( main_window, yy++, tab1, "  %s", nwipe_method_label( &nwipe_verify_one ) );
+         mvwprintw( main_window, yy++, tab1, "  %s", nwipe_method_label( &nwipe_is5enh ) );
+@@ -3264,19 +3244,6 @@ void nwipe_gui_method( void )
+ 
+             case 1:
+ 
+-                mvwprintw( main_window, 2, tab2, "Security Level: high (1 pass)" );
+-
+-                mvwprintw( main_window, 4, tab2, "This method fills the device with ones.           " );
+-                mvwprintw( main_window, 5, tab2, "                                                  " );
+-                mvwprintw( main_window, 6, tab2, "This method might be used when wiping a solid     " );
+-                mvwprintw( main_window, 7, tab2, "state drive if an additional level of security is " );
+-                mvwprintw( main_window, 8, tab2, "required beyond using the drives internal secure  " );
+-                mvwprintw( main_window, 9, tab2, "erase features. Alternatively PRNG may be         " );
+-                mvwprintw( main_window, 10, tab2, "preferable.                                       " );
+-                break;
+-
+-            case 2:
+-
+                 mvwprintw( main_window, 2, tab2, "Security Level: higher (8 passes)" );
+ 
+                 mvwprintw( main_window, 4, tab2, "The Royal Canadian Mounted Police Technical       " );
+@@ -3288,7 +3255,7 @@ void nwipe_gui_method( void )
+                 mvwprintw( main_window, 10, tab2, "one random byte and that is changed each round.   " );
+                 break;
+ 
+-            case 3:
++            case 2:
+ 
+                 mvwprintw( main_window, 2, tab2, "Security Level: higher (3 passes)" );
+ 
+@@ -3301,7 +3268,7 @@ void nwipe_gui_method( void )
+                 mvwprintw( main_window, 10, tab2, "Pass 3: A random number generated data stream.    " );
+                 break;
+ 
+-            case 4:
++            case 3:
+ 
+                 mvwprintw( main_window, 2, tab2, "Security Level: higher (7 passes)" );
+ 
+@@ -3317,7 +3284,7 @@ void nwipe_gui_method( void )
+                 mvwprintw( main_window, 12, tab2, "Pass 7: A random number generated data stream.    " );
+                 break;
+ 
+-            case 5:
++            case 4:
+ 
+                 mvwprintw( main_window, 2, tab2, "Security Level: Paranoid ! (35 passes)            " );
+                 mvwprintw( main_window, 3, tab2, "Don't waste your time with this on a modern drive!" );
+@@ -3328,21 +3295,7 @@ void nwipe_gui_method( void )
+                 mvwprintw( main_window, 8, tab2, "relevant in regards to modern hard disk drives.   " );
+                 break;
+ 
+-            case 6:
+-
+-                mvwprintw( main_window, 2, tab2, "Security Level: Depends on Rounds" );
+-
+-                mvwprintw( main_window, 4, tab2, "This method fills the device with a stream from   " );
+-                mvwprintw( main_window, 5, tab2, "the PRNG. It is probably the best method to use   " );
+-                mvwprintw( main_window, 6, tab2, "on modern hard disk drives due to variation in    " );
+-                mvwprintw( main_window, 7, tab2, "encoding methods.                                 " );
+-                mvwprintw( main_window, 8, tab2, "                                                  " );
+-                mvwprintw( main_window, 9, tab2, "This method has a high security level with 1      " );
+-                mvwprintw( main_window, 10, tab2, "round and an increasingly higher security level   " );
+-                mvwprintw( main_window, 11, tab2, "as rounds are increased.                          " );
+-                break;
+-
+-            case 7:
++            case 5:
+ 
+                 mvwprintw( main_window, 2, tab2, "Security Level: Not applicable" );
+ 
+@@ -3351,7 +3304,7 @@ void nwipe_gui_method( void )
+ 
+                 break;
+ 
+-            case 8:
++            case 6:
+ 
+                 mvwprintw( main_window, 2, tab2, "Security Level: Not applicable" );
+ 
+@@ -3360,7 +3313,7 @@ void nwipe_gui_method( void )
+ 
+                 break;
+ 
+-            case 9:
++            case 7:
+ 
+                 mvwprintw( main_window, 2, tab2, "Security Level: higher (3 passes)" );
+ 
+@@ -3373,7 +3326,7 @@ void nwipe_gui_method( void )
+                 mvwprintw( main_window, 10, tab2, "Pass 3 : A random number generated data stream.   " );
+                 mvwprintw( main_window, 11, tab2, "Pass 4 : Last Pass Verification of PRNG stream    " );
+                 break;
+-            case 10:
++            case 8:
+ 
+                 mvwprintw( main_window, 2, tab2, "Security Level: very high (7 passes)" );
+ 
+@@ -3386,7 +3339,7 @@ void nwipe_gui_method( void )
+                 mvwprintw( main_window, 10, tab2, "it performs five additional passes of PRNG-       " );
+                 mvwprintw( main_window, 11, tab2, "generated random data to maximize security.       " );
+                 break;
+-            case 11:
++            case 9:
+ 
+                 mvwprintw( main_window, 2, tab2, "Security Level: very high (6 passes)" );
+ 
+@@ -3462,46 +3415,38 @@ void nwipe_gui_method( void )
+             break;
+ 
+         case 1:
+-            nwipe_options.method = &nwipe_one;
+-            break;
+-
+-        case 2:
+             nwipe_options.method = &nwipe_ops2;
+             break;
+ 
+-        case 3:
++        case 2:
+             nwipe_options.method = &nwipe_dodshort;
+             break;
+ 
+-        case 4:
++        case 3:
+             nwipe_options.method = &nwipe_dod522022m;
+             break;
+ 
+-        case 5:
++        case 4:
+             nwipe_options.method = &nwipe_gutmann;
+             break;
+ 
+-        case 6:
+-            nwipe_options.method = &nwipe_random;
+-            break;
+-
+-        case 7:
++        case 5:
+             nwipe_options.method = &nwipe_verify_zero;
+             break;
+ 
+-        case 8:
++        case 6:
+             nwipe_options.method = &nwipe_verify_one;
+             break;
+ 
+-        case 9:
++        case 7:
+             nwipe_options.method = &nwipe_is5enh;
+             break;
+ 
+-        case 10:
++        case 8:
+             nwipe_options.method = &nwipe_bruce7;
+             break;
+ 
+-        case 11:
++        case 9:
+             nwipe_options.method = &nwipe_bmb;
+             break;
+     }
+diff --git a/src/options.c b/src/options.c
+index 86a0384..a291d64 100644
+--- a/src/options.c
++++ b/src/options.c
+@@ -166,7 +166,7 @@ int nwipe_options_parse( int argc, char** argv )
+     nwipe_options.force = 0;
+     nwipe_options.autonuke = 0;
+     nwipe_options.autopoweroff = 0;
+-    nwipe_options.method = &nwipe_random;
++    nwipe_options.method = &nwipe_dodshort; /* SBT: DoD Short (3 passes) is the default method */
+     nwipe_options.prng_auto = 1; /* by default the PRNG is selected through the benchmark selection */
+     nwipe_options.prng_benchmark_only = 0;
+     nwipe_options.prng_bench_seconds = 1.0; /* default for interactive / manual */
+@@ -205,7 +205,7 @@ int nwipe_options_parse( int argc, char** argv )
+     nwipe_options.io_direction = NWIPE_IO_DIRECTION_FORWARD; /* Default: forward I/O direction. */
+     nwipe_options.noretry_io_errors = 0;
+     nwipe_options.noabort_block_errors = 0;
+-    nwipe_options.PDF_toggle_host_info = 0; /* Default: host visibility on PDF disabled */
++    nwipe_options.PDF_toggle_host_info = 1; /* SBT: host visibility on PDF enabled by default */
+     nwipe_options.PDFtag = 0;
+     nwipe_options.PDF_duplex = 0;  // 0 = duplex switched off, 1 = on.
+     memset( nwipe_options.logfile, '\0', sizeof( nwipe_options.logfile ) );
+@@ -259,7 +259,7 @@ int nwipe_options_parse( int argc, char** argv )
+             "nwipe_conf_read_setting():Error reading PDF_Certificate.PDF_toggle_host_info from nwipe.conf, ret code %i",
+             ret );
+ 
+-        nwipe_options.PDF_toggle_host_info = 0; /* Disable host visibility on PDF */
++        nwipe_options.PDF_toggle_host_info = 1; /* SBT: host visibility on PDF enabled by default */
+     }
+     else
+     {
+@@ -279,7 +279,7 @@ int nwipe_options_parse( int argc, char** argv )
+                 nwipe_log( NWIPE_LOG_ERROR,
+                            "PDF_Certificate.PDF_toggle_host_info in nwipe.conf returned a value that was neither "
+                            "ENABLED or DISABLED" );
+-                nwipe_options.PDF_toggle_host_info = 0;  // Default to disabled
++                nwipe_options.PDF_toggle_host_info = 1;  // Default to enabled
+             }
+         }
+     }
