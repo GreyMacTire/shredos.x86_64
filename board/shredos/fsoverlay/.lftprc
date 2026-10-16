@@ -1,4 +1,0 @@
-set cmd:fail-exit true
-set net:timeout 5
-set net:max-retries 100
-
